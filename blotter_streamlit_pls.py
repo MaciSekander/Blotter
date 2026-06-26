@@ -33,40 +33,39 @@ def load_uploaded_data(uploaded_file) -> list[list[object]]:
 
 
 def filtered_blotter(df: pd.DataFrame) -> pd.DataFrame:
-    st.sidebar.header("Filters")
-
     instrument_options = sorted(df["Instrument Type"].unique().tolist())
-    selected_instruments = st.sidebar.multiselect(
+    ticker_options = sorted(df["Ticker"].unique().tolist())
+    side_options = ["Long", "Short", "Flat"]
+    min_notional = float(df["Gross Notional"].min())
+    max_notional = float(df["Gross Notional"].max())
+
+    st.subheader("Controls")
+    first_row = st.columns([1.4, 1.4, 1])
+    selected_instruments = first_row[0].multiselect(
         "Instrument type",
         options=instrument_options,
         default=instrument_options,
     )
-
-    ticker_options = sorted(df["Ticker"].unique().tolist())
-    selected_tickers = st.sidebar.multiselect(
+    selected_tickers = first_row[1].multiselect(
         "Ticker",
         options=ticker_options,
         default=ticker_options,
     )
-
-    side_options = ["Long", "Short", "Flat"]
-    selected_sides = st.sidebar.multiselect(
+    selected_sides = first_row[2].multiselect(
         "Side",
         options=side_options,
         default=["Long", "Short"],
     )
 
-    min_notional = float(df["Gross Notional"].min())
-    max_notional = float(df["Gross Notional"].max())
-    notional_range = st.sidebar.slider(
+    second_row = st.columns([2, 1])
+    notional_range = second_row[0].slider(
         "Gross notional",
         min_value=min_notional,
         max_value=max_notional,
         value=(min_notional, max_notional),
         format="$%.0f",
     )
-
-    search_text = st.sidebar.text_input("Search ticker").strip().casefold()
+    search_text = second_row[1].text_input("Search ticker").strip().casefold()
 
     filtered = df[
         df["Instrument Type"].isin(selected_instruments)
@@ -121,12 +120,18 @@ def main() -> None:
     st.set_page_config(page_title="Blotter Workbench", layout="wide")
     st.title("Blotter Workbench")
 
-    uploaded_file = st.sidebar.file_uploader("Upload blotter JSON", type=["json"])
+    source_cols = st.columns([2, 1])
+    with source_cols[0]:
+        uploaded_file = st.file_uploader("Upload blotter JSON", type=["json"])
+
     raw_data = (
         load_uploaded_data(uploaded_file)
         if uploaded_file is not None
         else load_default_data()
     )
+    source_name = uploaded_file.name if uploaded_file is not None else DATA_FILE.name
+    with source_cols[1]:
+        st.metric("Data source", source_name)
 
     df = normalize_blotter(raw_data)
     filtered = filtered_blotter(df)
