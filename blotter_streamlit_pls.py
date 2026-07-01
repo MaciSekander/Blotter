@@ -17,8 +17,10 @@ DISPLAY_COLUMNS = [
     "Display Quantity",
     "Input Unit",
     "Display Notional",
+    "Quote Type",
     "Raw Quote",
-    "Display Quote",
+    "Display Clean Price",
+    "Display Clean Rate",
 ]
 
 
@@ -32,6 +34,53 @@ def load_uploaded_data(uploaded_file) -> list[list[object]]:
     return json.loads(uploaded_file.getvalue().decode("utf-8"))
 
 
+def load_bloomberg_data() -> list[list[object]]:
+    raise NotImplementedError("Bloomberg pull code has not been wired in yet.")
+
+
+def apply_mobile_style() -> None:
+    st.markdown(
+        """
+        <style>
+        .block-container {
+            padding-top: 1.25rem;
+            padding-bottom: 2rem;
+            max-width: 1180px;
+        }
+        div[data-testid="stMetric"] {
+            border: 1px solid #e6e8ef;
+            border-radius: 8px;
+            padding: 0.75rem 0.9rem;
+            background: #ffffff;
+        }
+        div[data-testid="stHorizontalBlock"] {
+            gap: 0.75rem;
+        }
+        .stButton > button,
+        .stDownloadButton > button {
+            border-radius: 8px;
+            min-height: 2.75rem;
+        }
+        div[data-baseweb="select"] > div,
+        div[data-baseweb="input"] > div {
+            border-radius: 8px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def load_selected_data(source_choice: str, uploaded_file) -> tuple[list[list[object]], str]:
+    if source_choice == "Upload JSON":
+        if uploaded_file is None:
+            return load_default_data(), DATA_FILE.name
+        return load_uploaded_data(uploaded_file), uploaded_file.name
+    if source_choice == "Bloomberg":
+        return load_bloomberg_data(), "Bloomberg"
+    return load_default_data(), DATA_FILE.name
+
+
 def filtered_blotter(df: pd.DataFrame) -> pd.DataFrame:
     instrument_options = sorted(df["Instrument Type"].unique().tolist())
     ticker_options = sorted(df["Ticker"].unique().tolist())
@@ -39,7 +88,7 @@ def filtered_blotter(df: pd.DataFrame) -> pd.DataFrame:
     min_notional = float(df["Gross Notional"].min())
     max_notional = float(df["Gross Notional"].max())
 
-    st.subheader("Controls")
+    st.subheader("Filter")
     first_row = st.columns([1.4, 1.4, 1])
     selected_instruments = first_row[0].multiselect(
         "Instrument type",
@@ -95,12 +144,41 @@ def render_blotter(df: pd.DataFrame) -> None:
     table = df[DISPLAY_COLUMNS].rename(
         columns={
             "Display Quantity": "Position",
+            "Input Unit": "Unit",
             "Display Notional": "Signed Notional",
-            "Raw Quote": "Raw Price / Rate",
-            "Display Quote": "Clean Price / Rate",
+            "Display Clean Price": "Clean Price",
+            "Display Clean Rate": "Clean Rate",
         }
     )
     st.dataframe(table, use_container_width=True, hide_index=True)
+
+
+def render_trade_cards(df: pd.DataFrame) -> None:
+    if df.empty:
+        st.info("No trades match the current filters.")
+        return
+
+    for _, row in df.head(30).iterrows():
+        quote_label = "Clean Rate" if row["Quote Type"] == "Rate" else "Clean Price"
+        quote_value = (
+            row["Display Clean Rate"]
+            if row["Quote Type"] == "Rate"
+            else row["Display Clean Price"]
+        )
+        with st.container(border=True):
+            top = st.columns([1.4, 1, 1])
+            top[0].markdown(f"**{row['Ticker']}**")
+            top[1].write(row["Instrument Type"])
+            top[2].write(row["Side"])
+
+            detail = st.columns(4)
+            detail[0].metric("Position", row["Display Quantity"])
+            detail[1].metric("Unit", row["Input Unit"])
+            detail[2].metric("USD Notional", row["Display Notional"])
+            detail[3].metric(quote_label, quote_value)
+
+    if len(df) > 30:
+        st.caption(f"Showing first 30 of {len(df):,} filtered trades. Use the table tab for all rows.")
 
 
 def render_download(df: pd.DataFrame) -> None:
@@ -118,46 +196,62 @@ def render_download(df: pd.DataFrame) -> None:
 
 def main() -> None:
     st.set_page_config(page_title="Blotter Workbench", layout="wide")
-    st.title("Blotter Workbench")
+    apply_mobile_style()
+    st.title("Blotter")
 
-    source_cols = st.columns([2, 1])
+    source_cols = st.columns([1.5, 1.8, 1])
     with source_cols[0]:
-        uploaded_file = st.file_uploader("Upload blotter JSON", type=["json"])
-
-    raw_data = (
-        load_uploaded_data(uploaded_file)
-        if uploaded_file is not None
-        else load_default_data()
-    )
-    source_name = uploaded_file.name if uploaded_file is not None else DATA_FILE.name
+        source_choice = st.radio(
+            "Source",
+            ["Sample JSON", "Upload JSON", "Bloomberg"],
+            horizontal=True,
+        )
     with source_cols[1]:
-        st.metric("Data source", source_name)
+        uploaded_file = st.file_uploader(
+            "Upload blotter JSON",
+            type=["json"],
+            disabled=source_choice != "Upload JSON",
+        )
+
+    try:
+        raw_data, source_name = load_selected_data(source_choice, uploaded_file)
+    except NotImplementedError as exc:
+        st.warning(str(exc))
+        st.info("Using the sample JSON until the Bloomberg pull code is added.")
+        raw_data, source_name = load_default_data(), DATA_FILE.name
+
+    with source_cols[2]:
+        st.metric("Loaded", source_name)
 
     df = normalize_blotter(raw_data)
     filtered = filtered_blotter(df)
 
     render_metrics(filtered)
 
-    tabs = st.tabs(["Blotter", "By Instrument", "By Ticker", "Data Quality"])
+    tabs = st.tabs(["Trades", "Table", "By Instrument", "By Ticker", "Data Quality"])
     with tabs[0]:
-        render_blotter(filtered)
+        render_trade_cards(filtered)
         render_download(filtered)
 
     with tabs[1]:
+        render_blotter(filtered)
+        render_download(filtered)
+
+    with tabs[2]:
         st.dataframe(
             group_summary(filtered, "Instrument Type"),
             use_container_width=True,
             hide_index=True,
         )
 
-    with tabs[2]:
+    with tabs[3]:
         st.dataframe(
             group_summary(filtered, "Ticker"),
             use_container_width=True,
             hide_index=True,
         )
 
-    with tabs[3]:
+    with tabs[4]:
         blank_rows = len(raw_data) - len(df)
         quality = pd.DataFrame(
             [
@@ -166,11 +260,15 @@ def main() -> None:
                 {"Check": "Blank or invalid rows removed", "Value": f"{blank_rows:,}"},
                 {
                     "Check": "Swaption notional convention",
-                    "Value": "SR rows are scaled as millions of dollars",
+                    "Value": "SR rows are entered as USD millions and displayed as full USD notional",
                 },
                 {
                     "Check": "Treasury futures convention",
-                    "Value": "TY/US quantities are scaled by $100,000 per contract",
+                    "Value": "TY/US/USTB quantities are contracts scaled by $100,000 each",
+                },
+                {
+                    "Check": "Quote convention",
+                    "Value": "Rates and prices are split into separate clean columns",
                 },
             ]
         )

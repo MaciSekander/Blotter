@@ -53,9 +53,9 @@ def notional_multiplier(ticker: str) -> float:
 
 def input_unit(ticker: str) -> str:
     if ticker.startswith("SR "):
-        return "mm"
+        return "USD millions"
     if ticker.startswith("TY ") or ticker.startswith("US ") or ticker.startswith("USTB"):
-        return "contracts"
+        return "Contracts"
     return "units"
 
 
@@ -98,15 +98,36 @@ def clean_quote(row: pd.Series) -> float | None:
     return parse_rate(row["Raw Quote"])
 
 
-def format_quote(row: pd.Series) -> str:
-    quote = row["Clean Quote"]
-    if pd.isna(quote):
-        return str(row["Raw Quote"])
-    if row["Instrument Type"] == "Swaption":
-        return f"{quote:.4f}%"
-    if row["Instrument Type"] in {"Treasury Future", "Treasury Bond"}:
-        return f"{quote:.5f}"
-    return f"{quote:,.4f}"
+def quote_type(instrument_type: str) -> str:
+    if instrument_type == "Swaption":
+        return "Rate"
+    if instrument_type in {"Treasury Future", "Treasury Bond"}:
+        return "Price"
+    return "Value"
+
+
+def clean_price(row: pd.Series) -> float | None:
+    if row["Quote Type"] == "Price":
+        return row["Clean Quote"]
+    return None
+
+
+def clean_rate(row: pd.Series) -> float | None:
+    if row["Quote Type"] == "Rate":
+        return row["Clean Quote"]
+    return None
+
+
+def format_price(value: float | None) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return f"{value:.5f}"
+
+
+def format_rate(value: float | None) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return f"{value:.4f}%"
 
 
 def format_money(value: float) -> str:
@@ -117,6 +138,11 @@ def format_money(value: float) -> str:
     if absolute >= 1_000_000:
         return f"{sign}${absolute / 1_000_000:,.1f}mm"
     return f"{sign}${absolute:,.0f}"
+
+
+def format_usd(value: float) -> str:
+    sign = "-" if value < 0 else ""
+    return f"{sign}${abs(value):,.0f}"
 
 
 def normalize_blotter(data: list[list[Any]]) -> pd.DataFrame:
@@ -141,8 +167,12 @@ def normalize_blotter(data: list[list[Any]]) -> pd.DataFrame:
     df["Signed Notional"] = df["Raw Quantity"] * df["Multiplier"]
     df["Gross Notional"] = df["Signed Notional"].abs()
     df["Clean Quote"] = df.apply(clean_quote, axis=1)
-    df["Display Quote"] = df.apply(format_quote, axis=1)
-    df["Display Notional"] = df["Signed Notional"].map(format_money)
+    df["Quote Type"] = df["Instrument Type"].map(quote_type)
+    df["Clean Price"] = df.apply(clean_price, axis=1)
+    df["Clean Rate"] = df.apply(clean_rate, axis=1)
+    df["Display Clean Price"] = df["Clean Price"].map(format_price)
+    df["Display Clean Rate"] = df["Clean Rate"].map(format_rate)
+    df["Display Notional"] = df["Signed Notional"].map(format_usd)
     return df
 
 
@@ -158,7 +188,14 @@ def summarize(df: pd.DataFrame) -> BlotterSummary:
 def group_summary(df: pd.DataFrame, by: str) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(
-            columns=[by, "Trades", "Gross Notional", "Net Notional", "Average Quote"]
+            columns=[
+                by,
+                "Trades",
+                "Gross Notional",
+                "Net Notional",
+                "Average Price",
+                "Average Rate",
+            ]
         )
 
     grouped = (
@@ -168,14 +205,14 @@ def group_summary(df: pd.DataFrame, by: str) -> pd.DataFrame:
             **{
                 "Gross Notional": ("Gross Notional", "sum"),
                 "Net Notional": ("Signed Notional", "sum"),
-                "Average Quote": ("Clean Quote", "mean"),
+                "Average Price": ("Clean Price", "mean"),
+                "Average Rate": ("Clean Rate", "mean"),
             },
         )
         .sort_values("Gross Notional", ascending=False)
     )
     grouped["Gross Notional"] = grouped["Gross Notional"].map(format_money)
     grouped["Net Notional"] = grouped["Net Notional"].map(format_money)
-    grouped["Average Quote"] = grouped["Average Quote"].map(
-        lambda value: "" if pd.isna(value) else f"{value:,.4f}"
-    )
+    grouped["Average Price"] = grouped["Average Price"].map(format_price)
+    grouped["Average Rate"] = grouped["Average Rate"].map(format_rate)
     return grouped
