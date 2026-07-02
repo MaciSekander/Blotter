@@ -8,7 +8,7 @@ black/orange operations UI.
 
 ```bash
 pip install -r requirements.txt
-streamlit run blotter_streamlit_pls.py
+streamlit run blotter_streamlit.py
 ```
 
 ## Bloomberg
@@ -51,3 +51,12 @@ pip install -r requirements-bloomberg.txt
 - View one clean positions table.
 - View summaries by instrument type and ticker.
 - Download the filtered blotter as CSV.
+- **Upload CSV with prices** to refresh multiple quotes at once.
+- **Undo last add** to revert the most recent manual position.
+- **Clean empty rows** to remove blank entries from the blotter.
+- **Download as JSON** to save current blotter snapshot.
+
+## Fixed Issues
+
+- Fixed regex bug in `parse_treasury_price` (named group typo: `(?P>...` → `(?P<...`)
+  This fixes parsing of treasury prices like `109-04+` and `98-181`.

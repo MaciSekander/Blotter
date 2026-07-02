@@ -24,16 +24,6 @@ class BlotterSummary:
     unique_tickers: int
 
 
-def classify_ticker(ticker: str) -> str:
-    if ticker.startswith("SR "):
-        return "Swaption"
-    if ticker.startswith("TY ") or ticker.startswith("US "):
-        return "Treasury Future"
-    if ticker.startswith("USTB"):
-        return "Treasury Bond"
-    return "Other"
-
-
 def side_from_quantity(quantity: float) -> str:
     if quantity > 0:
         return "Long"
@@ -42,19 +32,29 @@ def side_from_quantity(quantity: float) -> str:
     return "Flat"
 
 
+def classify_ticker(ticker: str) -> str:
+    ticker_str = str(ticker).strip()
+    if ticker_str.startswith("USOS") or ticker_str.startswith("SR"):
+        return "Swaption"
+    if ticker_str.startswith("TY") or ticker_str.startswith("US"):
+        return "Treasury Future"
+    return "Other"
+
+
 def notional_multiplier(ticker: str) -> float:
-    root = ticker.split()[0]
-    if ticker.startswith("SR "):
+    ticker_str = str(ticker).strip()
+    if ticker_str.startswith("USOS") or ticker_str.startswith("SR"):
         return SWAPTION_NOTIONAL_MULTIPLIER
-    if ticker.startswith("USTB"):
-        return 100_000
+    match = re.match(r"^(TY|US)", ticker_str)
+    root = match.group(1) if match else ticker_str
     return FUTURES_CONTRACT_NOTIONAL.get(root, 1.0)
 
 
 def input_unit(ticker: str) -> str:
-    if ticker.startswith("SR "):
+    ticker_str = str(ticker).strip()
+    if ticker_str.startswith("SR"):
         return "USD millions"
-    if ticker.startswith("TY ") or ticker.startswith("US ") or ticker.startswith("USTB"):
+    if ticker_str.startswith("TY") or ticker_str.startswith("US"):
         return "Contracts"
     return "units"
 
@@ -96,7 +96,7 @@ def parse_rate(value: Any) -> float | None:
 
 def clean_quote(row: pd.Series) -> float | None:
     instrument_type = row["Instrument Type"]
-    if instrument_type in {"Treasury Future", "Treasury Bond"}:
+    if instrument_type == "Treasury Future":
         return parse_treasury_price(row["Raw Quote"])
     if instrument_type == "Swaption":
         return parse_rate(row["Raw Quote"])
@@ -106,7 +106,7 @@ def clean_quote(row: pd.Series) -> float | None:
 def quote_type(instrument_type: str) -> str:
     if instrument_type == "Swaption":
         return "Rate"
-    if instrument_type in {"Treasury Future", "Treasury Bond"}:
+    if instrument_type == "Treasury Future":
         return "Price"
     return "Value"
 
@@ -135,6 +135,22 @@ def format_rate(value: float | None) -> str:
     return f"{value:.4f}%"
 
 
+def build_ticker_maps(raw_data: list[list]) -> tuple[dict[str, str], dict[str, str]]:
+    """
+    Returns two dicts:
+      internal_to_bbg: {'TYU6': 'TYU6 COMB Comdty', ...}
+      bbg_to_internal: {'TYU6 COMB Comdty': 'TYU6', ...}
+    """
+    internal_tickers = sorted({
+        normalize_ticker_name(row[0])
+        for row in raw_data
+        if row and len(row) >= 3 and row[0]
+    })
+    internal_to_bbg = {t: get_bloomberg_market_ticker(t) for t in internal_tickers}
+    bbg_to_internal = {v: k for k, v in internal_to_bbg.items()}
+    return internal_to_bbg, bbg_to_internal
+
+
 def format_money(value: float) -> str:
     sign = "-" if value < 0 else ""
     absolute = abs(value)
@@ -150,6 +166,43 @@ def format_usd(value: float) -> str:
     return f"{sign}${abs(value):,.0f}"
 
 
+def normalize_ticker_name(ticker: str) -> str:
+    ticker_str = " ".join(str(ticker).split()).strip()
+
+    # Strip BBG suffixes first so everything below works on clean input
+    for suffix in (" COMB Comdty", " BGN Curncy", " Govt", " Index", " Equity"):
+        if ticker_str.endswith(suffix):
+            ticker_str = ticker_str[: -len(suffix)].strip()
+            break
+
+    # BBG swaption format: 'USOSFR15Y' -> 'SR 15Y'
+    sr_match = re.match(r"^USOSFR(.+)$", ticker_str)
+    if sr_match:
+        return f"SR {sr_match.group(1)}"
+
+    # Collapse 'TY U6' -> 'TYU6', 'US U6' -> 'USU6'
+    return re.sub(r"^(TY|US)\s+(\w+)", r"\1\2", ticker_str)
+
+
+def get_bloomberg_market_ticker(internal_ticker: str) -> str:
+    """
+    Translates a normalized internal ticker into a valid Bloomberg ticker.
+      TYU6   -> 'TYU6 COMB Comdty'
+      SR 15Y -> 'USOSFR15Y BGN Curncy'
+    """
+    ticker_str = str(internal_ticker).strip()
+
+    if ticker_str.startswith("SR"):
+        tenor = ticker_str.replace("SR", "").strip()
+        return f"USOSFR{tenor} BGN Curncy"
+
+    if ticker_str.startswith("TY") or ticker_str.startswith("US"):
+        if not ticker_str.endswith("COMB Comdty"):
+            return f"{ticker_str} COMB Comdty"
+
+    return ticker_str
+
+
 def normalize_blotter(data: list[list[Any]]) -> pd.DataFrame:
     df = pd.DataFrame(data, columns=COLUMNS)
     df = df[df["Ticker Name"].astype(str).str.strip().ne("")].copy()
@@ -160,7 +213,7 @@ def normalize_blotter(data: list[list[Any]]) -> pd.DataFrame:
             "Size": "Raw Quote",
         }
     )
-    df["Ticker"] = df["Ticker"].astype(str).str.strip()
+    df["Ticker"] = df["Ticker"].map(normalize_ticker_name)
     df["Raw Quantity"] = pd.to_numeric(df["Raw Quantity"], errors="coerce")
     df = df.dropna(subset=["Ticker", "Raw Quantity"]).reset_index(drop=True)
 
@@ -181,17 +234,8 @@ def normalize_blotter(data: list[list[Any]]) -> pd.DataFrame:
     return df
 
 
-def apply_snapshot_prices(
-    blotter_data: list[list[Any]],
-    snapshot: pd.DataFrame,
-) -> list[list[Any]]:
-    prices = dict(
-        zip(
-            snapshot["ticker"].astype(str),
-            pd.to_numeric(snapshot["last_price"], errors="coerce"),
-        )
-    )
-
+def apply_snapshot_prices(blotter_data, snapshot):
+    prices = dict(zip(snapshot["ticker"].astype(str), pd.to_numeric(snapshot["last_price"], errors="coerce")))
     refreshed = []
     for row in blotter_data:
         if len(row) < 3:
@@ -213,14 +257,7 @@ def summarize(df: pd.DataFrame) -> BlotterSummary:
 def group_summary(df: pd.DataFrame, by: str) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(
-            columns=[
-                by,
-                "Trades",
-                "Gross Notional",
-                "Net Notional",
-                "Average Price",
-                "Average Rate",
-            ]
+            columns=[by, "Trades", "Gross Notional", "Net Notional", "Average Price", "Average Rate"]
         )
 
     grouped = (
