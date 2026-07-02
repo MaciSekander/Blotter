@@ -67,6 +67,11 @@ def format_quantity(value: float) -> str:
 
 def parse_treasury_price(value: Any) -> float | None:
     text = str(value).strip()
+    try:
+        return float(Decimal(text))
+    except (InvalidOperation, ValueError):
+        pass
+
     match = re.fullmatch(r"(?P<points>-?\d+)-(?P<thirty_seconds>\d{2})(?P<tail>\+|\d)?", text)
     if not match:
         return None
@@ -174,6 +179,26 @@ def normalize_blotter(data: list[list[Any]]) -> pd.DataFrame:
     df["Display Clean Rate"] = df["Clean Rate"].map(format_rate)
     df["Display Notional"] = df["Signed Notional"].map(format_usd)
     return df
+
+
+def apply_snapshot_prices(
+    blotter_data: list[list[Any]],
+    snapshot: pd.DataFrame,
+) -> list[list[Any]]:
+    prices = dict(
+        zip(
+            snapshot["ticker"].astype(str),
+            pd.to_numeric(snapshot["last_price"], errors="coerce"),
+        )
+    )
+
+    refreshed = []
+    for row in blotter_data:
+        if len(row) < 3:
+            continue
+        ticker, quantity, quote = row[:3]
+        refreshed.append([ticker, quantity, prices.get(str(ticker), quote)])
+    return refreshed
 
 
 def summarize(df: pd.DataFrame) -> BlotterSummary:

@@ -6,7 +6,14 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from blotter_core import format_money, group_summary, normalize_blotter, summarize
+from bloomberg_provider import get_bloomberg_snapshot
+from blotter_core import (
+    apply_snapshot_prices,
+    format_money,
+    group_summary,
+    normalize_blotter,
+    summarize,
+)
 
 
 DATA_FILE = Path(__file__).with_name("BLOTTER.json")
@@ -34,8 +41,10 @@ def load_uploaded_data(uploaded_file) -> list[list[object]]:
     return json.loads(uploaded_file.getvalue().decode("utf-8"))
 
 
-def load_bloomberg_data() -> list[list[object]]:
-    raise NotImplementedError("Bloomberg pull code has not been wired in yet.")
+def load_bloomberg_data(base_data: list[list[object]]) -> tuple[list[list[object]], pd.DataFrame]:
+    tickers = sorted({str(row[0]).strip() for row in base_data if row and str(row[0]).strip()})
+    snapshot = get_bloomberg_snapshot(tickers)
+    return apply_snapshot_prices(base_data, snapshot), snapshot
 
 
 def apply_mobile_style() -> None:
@@ -71,14 +80,19 @@ def apply_mobile_style() -> None:
     )
 
 
-def load_selected_data(source_choice: str, uploaded_file) -> tuple[list[list[object]], str]:
+def load_selected_data(
+    source_choice: str,
+    uploaded_file,
+) -> tuple[list[list[object]], str, pd.DataFrame | None]:
     if source_choice == "Upload JSON":
         if uploaded_file is None:
-            return load_default_data(), DATA_FILE.name
-        return load_uploaded_data(uploaded_file), uploaded_file.name
+            return load_default_data(), DATA_FILE.name, None
+        return load_uploaded_data(uploaded_file), uploaded_file.name, None
     if source_choice == "Bloomberg":
-        return load_bloomberg_data(), "Bloomberg"
-    return load_default_data(), DATA_FILE.name
+        base_data = load_default_data()
+        live_data, snapshot = load_bloomberg_data(base_data)
+        return live_data, "Bloomberg LAST_PRICE", snapshot
+    return load_default_data(), DATA_FILE.name, None
 
 
 def filtered_blotter(df: pd.DataFrame) -> pd.DataFrame:
@@ -194,6 +208,16 @@ def render_download(df: pd.DataFrame) -> None:
     )
 
 
+def render_bloomberg_snapshot(snapshot: pd.DataFrame | None) -> None:
+    if snapshot is None:
+        return
+
+    st.caption(
+        f"Bloomberg snapshot loaded {len(snapshot):,} ticker(s) at "
+        f"{snapshot['time'].max() if 'time' in snapshot else 'current time'}."
+    )
+
+
 def main() -> None:
     st.set_page_config(page_title="Blotter Workbench", layout="wide")
     apply_mobile_style()
@@ -213,12 +237,21 @@ def main() -> None:
             disabled=source_choice != "Upload JSON",
         )
 
-    try:
-        raw_data, source_name = load_selected_data(source_choice, uploaded_file)
-    except NotImplementedError as exc:
-        st.warning(str(exc))
-        st.info("Using the sample JSON until the Bloomberg pull code is added.")
-        raw_data, source_name = load_default_data(), DATA_FILE.name
+    if source_choice == "Bloomberg":
+        try:
+            raw_data, source_name, bloomberg_snapshot = load_selected_data(
+                source_choice,
+                uploaded_file,
+            )
+        except Exception as exc:
+            st.warning(f"Bloomberg load failed: {exc}")
+            st.info("Using the sample JSON until Bloomberg is available on this machine.")
+            raw_data, source_name, bloomberg_snapshot = load_default_data(), DATA_FILE.name, None
+    else:
+        raw_data, source_name, bloomberg_snapshot = load_selected_data(
+            source_choice,
+            uploaded_file,
+        )
 
     with source_cols[2]:
         st.metric("Loaded", source_name)
@@ -227,6 +260,7 @@ def main() -> None:
     filtered = filtered_blotter(df)
 
     render_metrics(filtered)
+    render_bloomberg_snapshot(bloomberg_snapshot)
 
     tabs = st.tabs(["Trades", "Table", "By Instrument", "By Ticker", "Data Quality"])
     with tabs[0]:

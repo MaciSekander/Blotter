@@ -11,6 +11,22 @@ pip install -r requirements.txt
 streamlit run blotter_streamlit_pls.py
 ```
 
+## Bloomberg
+
+The `Bloomberg` source uses `xbbg.bdp` to pull `LAST_PRICE` for the tickers in
+`BLOTTER.json`, then refreshes the blotter quotes while keeping the same
+positions and notional conventions.
+
+Bloomberg mode requires:
+
+- Bloomberg Desktop running and logged in.
+- Bloomberg API permissions for the requested tickers.
+- `xbbg` installed in the runtime environment:
+
+```bash
+pip install -r requirements-bloomberg.txt
+```
+
 ## Conventions
 
 - `SR` rows are treated as swaptions and entered as USD millions.
@@ -24,8 +40,8 @@ streamlit run blotter_streamlit_pls.py
 ## Features
 
 - Upload an alternate blotter JSON file.
-- Bloomberg is available as a source option and is ready for a live-data loader
-  to be wired in.
+- Pull Bloomberg `LAST_PRICE` snapshots when Bloomberg Desktop and `xbbg` are
+  available.
 - Filter by instrument type, ticker, side, gross notional, and search text.
 - Review gross/net notional and trade counts.
 - Use a mobile-friendly trade-card view or a full table view.
