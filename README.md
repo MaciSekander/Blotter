@@ -1,8 +1,8 @@
 # Blotter Workbench
 
-Streamlit dashboard for reviewing a small rates blotter with corrected USD
-notional scaling, separate clean price/rate columns, and mobile-friendly trade
-cards.
+Streamlit dashboard for reviewing and editing a rates blotter with corrected
+USD notional scaling, separate clean price/rate columns, and a simple
+black/orange operations UI.
 
 ## Run
 
@@ -13,9 +13,12 @@ streamlit run blotter_streamlit_pls.py
 
 ## Bloomberg
 
-The `Bloomberg` source uses `xbbg.bdp` to pull `LAST_PRICE` for the tickers in
-`BLOTTER.json`, then refreshes the blotter quotes while keeping the same
-positions and notional conventions.
+The Bloomberg controls use `xbbg.bdp` to pull `LAST_PRICE`.
+
+- `Refresh Blotter from Bloomberg` refreshes quotes for the tickers already in
+  the blotter while keeping the same positions and notional conventions.
+- `Bloomberg Search` lets you type a ticker, pull its `LAST_PRICE`, and add it
+  to the blotter with an input position.
 
 Bloomberg mode requires:
 
@@ -42,8 +45,9 @@ pip install -r requirements-bloomberg.txt
 - Upload an alternate blotter JSON file.
 - Pull Bloomberg `LAST_PRICE` snapshots when Bloomberg Desktop and `xbbg` are
   available.
-- Filter by instrument type, ticker, side, gross notional, and search text.
+- Add manual rows or Bloomberg search results from basic input fields.
+- Filter with text/select/number inputs. No sliders or drag controls.
 - Review gross/net notional and trade counts.
-- Use a mobile-friendly trade-card view or a full table view.
+- View one clean positions table.
 - View summaries by instrument type and ticker.
 - Download the filtered blotter as CSV.

@@ -57,6 +57,14 @@ class BlotterCoreTest(unittest.TestCase):
         df = normalize_blotter(refreshed)
         self.assertEqual(df.loc[1, "Display Clean Price"], "109.25000")
 
+    def test_unknown_manual_ticker_still_normalizes(self):
+        df = normalize_blotter([["ABC US Equity", 10.0, 101.25]])
+
+        self.assertEqual(df.loc[0, "Instrument Type"], "Other")
+        self.assertEqual(df.loc[0, "Input Unit"], "units")
+        self.assertEqual(df.loc[0, "Display Notional"], "$10")
+        self.assertEqual(df.loc[0, "Quote Type"], "Value")
+
 
 if __name__ == "__main__":
     unittest.main()
